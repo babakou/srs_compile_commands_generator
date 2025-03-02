@@ -1,249 +1,268 @@
-use serde_json::{json, Value};
-use std::fs;
-use std::env;
 use std::io::Write;
-use glob::{glob};
-use snailquote::unescape;
-use std::fs::File;
+use std::path::PathBuf;
 
-#[derive(Default)]
-struct Configuration {
-    c_compiler_path: String,
-    cpp_compiler_path: String,
-    root_folder: String,
-    src_pattern: Vec<String>,
-    exclude_pattern: Vec<String>,
-    include_folders: Vec<String>,
-    compile_flags: Vec<String>
+use serde::Deserialize;
+use serde::Serialize;
+
+#[derive(Serialize, Deserialize, Default)]
+struct CompDBConf {
+    common : CommonConf,
+    workspace : Vec<WorkSpaceConf>
 }
 
-impl Configuration {
-    pub fn display(&self) {
-        println!("c_compiler_path: {}", self.c_compiler_path);
-        println!("cpp_compiler_path: {}", self.cpp_compiler_path);
-        println!("root_folder: {}", self.root_folder);
-        println!("src_pattern: {:?}", self.src_pattern);
-        println!("exclude_pattern: {:?}", self.exclude_pattern);
-        println!("include_folders: {:?}", self.include_folders);
-        println!("complete_flags: {:?}", self.compile_flags);
+#[derive(Serialize, Deserialize, Default)]
+struct CommonConf {
+    c_compiler : String,
+    cpp_compiler : String,
+    root_dir : String,
+    target : TargetConf,
+    include : Option<IncludeConf>,
+    option : Option<OptionConf>,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct WorkSpaceConf {
+    path : String,
+    target : Option<TargetConf>,
+    include : Option<IncludeConf>,
+    option : Option<OptionConf>,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct TargetConf {
+    match_pattern : Option<Vec<String>>,
+    ignore_pattern : Option<Vec<String>>,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct IncludeConf {
+    root_dir : Option<Vec<String>>,
+    ignore_pattern : Option<Vec<String>>,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct OptionConf {
+    arg : Option<Vec<String>>,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct CompilationEntry<'a> {
+    directory : &'a str,
+    command : Vec<String>,
+    file : String,
+}
+
+fn get_slashed_path_without_prefix(path : &PathBuf, prefix: &PathBuf) -> PathBuf {
+    if path.starts_with(prefix) {
+        path.strip_prefix(prefix).unwrap().to_str().unwrap().replace("\\", "/").into()
+    } else {
+        path.to_str().unwrap().replace("\\", "/").into()
     }
 }
 
-#[derive(Default)]
-struct ProjectConfiguration {
-    root_configuration: Configuration,
-    workspace_configurations: Vec<Configuration>,
-}
+fn list_include_dirs(
+    common_root : &PathBuf, 
+    common_include_conf : &Option<IncludeConf>, 
+    workspace_include_conf : &Option<IncludeConf>) -> Vec<PathBuf> {
 
-impl ProjectConfiguration {
-    pub fn update_root_config_from(&mut self, project_json_value: &Value) {
-        self.root_configuration.c_compiler_path = unescape(project_json_value["c_compiler_path"].as_str().unwrap_or_default()).unwrap_or_default();
-        self.root_configuration.cpp_compiler_path = unescape(project_json_value["cpp_compiler_path"].as_str().unwrap_or_default()).unwrap_or_default();
-        self.root_configuration.root_folder = unescape(project_json_value["project_root_folder"].as_str().unwrap_or_default()).unwrap_or_default();
-        if let Some(project_src_patterns) = project_json_value["project_src_pattern"].as_array() {
-            for project_src_pattern in project_src_patterns {
-                self.root_configuration.src_pattern.push(unescape(project_src_pattern.as_str().unwrap_or_default()).unwrap_or_default());
-            }
-        }
-        if let Some(project_exclude_patterns) = project_json_value["project_exclude_pattern"].as_array() {
-            for project_exclude_pattern in project_exclude_patterns {
-                self.root_configuration.exclude_pattern.push(unescape(project_exclude_pattern.as_str().unwrap_or_default()).unwrap_or_default());
-            }
-        }
-        if let Some(project_include_folders) = project_json_value["project_include_folders"].as_array() {
-            for project_include_folder in project_include_folders {
-                self.root_configuration.include_folders.push(unescape(project_include_folder.as_str().unwrap_or_default()).unwrap_or_default());
-            }
-        }
-        if let Some(project_compile_flags) = project_json_value["project_compile_flags"].as_array() {
-            for project_compile_flag in project_compile_flags {
-                self.root_configuration.compile_flags.push(unescape(project_compile_flag.as_str().unwrap_or_default()).unwrap_or_default());
-            }
-        }
-
-        self.root_configuration.display();
-    }
-
-    pub fn update_workspace_config_from(&mut self, project_json_value: &Value) {
-        let workspaces_json_value: &Vec<Value> = project_json_value["workspaces"].as_array().unwrap();
-        for workspace_json_value in workspaces_json_value {
-            let mut workspace: Configuration = Configuration::default();
-            workspace.c_compiler_path = unescape(workspace_json_value["c_compiler_path"].as_str().unwrap_or_default()).unwrap_or_default();
-            workspace.cpp_compiler_path = unescape(workspace_json_value["cpp_compiler_path"].as_str().unwrap_or_default()).unwrap_or_default();
-            workspace.root_folder = unescape(workspace_json_value["folder"].as_str().unwrap_or_default()).unwrap_or_default();
-            if let Some(workspace_src_patterns) = workspace_json_value["src_pattern"].as_array() {
-                for workspace_src_pattern in workspace_src_patterns {
-                    workspace.src_pattern.push(unescape(workspace_src_pattern.as_str().unwrap_or_default()).unwrap_or_default());
-                }
-            }
-            if let Some(workspace_exclude_patterns) = workspace_json_value["exclude_pattern"].as_array() {
-                for workspace_exclude_pattern in workspace_exclude_patterns {
-                    workspace.exclude_pattern.push(unescape(workspace_exclude_pattern.as_str().unwrap_or_default()).unwrap_or_default());
-                }
-            }
-            if let Some(workspace_include_folders) = workspace_json_value["include_folders"].as_array() {
-                let unescaped_workspace_include_folders: Vec<String> = workspace_include_folders.iter().map(|f| unescape(f.as_str().unwrap_or_default()).unwrap_or_default()).collect();
-                for workspace_include_folder in unescaped_workspace_include_folders {
-                    if workspace_include_folder.contains("C:/") {
-                        workspace.include_folders.push(workspace_include_folder);
-                    } else {
-                        workspace.include_folders.push(format!("{}/{}", workspace.root_folder, workspace_include_folder));
+    fn build_include_roots_from_include_conf(
+        common_root : &PathBuf,
+        common_include_conf : &Option<IncludeConf>,
+        workspace_include_conf : &Option<IncludeConf>,
+    ) -> Vec<PathBuf> {
+        fn add_include_roots_from_include_conf(org : &mut Vec<PathBuf>, common_root : &PathBuf, include_conf : &Option<IncludeConf>) {
+            if let Some(include_conf) = include_conf {            
+                if let Some(include_roots) = include_conf.root_dir.as_ref() {
+                    for include_root in include_roots {
+                        let include_root_as_path = std::path::PathBuf::from(include_root);
+                        if include_root_as_path.is_relative() {
+                            org.push(common_root.join(include_root_as_path));
+                        } else {
+                            org.push(include_root_as_path);
+                        }
                     }
                 }
             }
-            if let Some(workspace_compile_flags) = workspace_json_value["compile_flags"].as_array() {
-                for workspace_compile_flag in workspace_compile_flags {
-                    workspace.compile_flags.push(unescape(workspace_compile_flag.as_str().unwrap_or_default()).unwrap_or_default());
-                }
-            }
-            workspace.display();
-            self.workspace_configurations.push(workspace);
         }
+
+        let mut include_roots = Vec::<PathBuf>::new();
+        add_include_roots_from_include_conf(&mut include_roots, common_root, common_include_conf);
+        add_include_roots_from_include_conf(&mut include_roots, common_root, workspace_include_conf);
+
+        include_roots
     }
-}
 
-#[derive(Default)]
-struct CompileCommand {
-    directory: String,
-    arguments: Vec<String>,
-    file: String,
-}
+    let include_roots = build_include_roots_from_include_conf(common_root, common_include_conf, workspace_include_conf);
 
+    fn add_dirs_under_the_root(include_dirs : &mut Vec<PathBuf>, root_dir : &PathBuf, prefix : &PathBuf, ignore_pattern : &Vec<String>) {
 
-impl From<&ProjectConfiguration> for Vec<Value> {
-    fn from(project_configuration: &ProjectConfiguration) -> Self {
-        let mut compile_commands: Vec<Value> = Vec::new();
-        for workspace in &project_configuration.workspace_configurations {
-            let mut workspace_entire_include_folders = project_configuration.root_configuration.include_folders.clone();
-            workspace_entire_include_folders.extend(workspace.include_folders.clone().into_iter());
-            let workspace_entire_include_options: Vec<String> = workspace_entire_include_folders.iter().map(|f| format!("-include{}", f)).collect();
+        fn add_include_dirs_if_not_ignored(
+            include_dirs : &mut Vec<PathBuf>,
+            path : &PathBuf,
+            ignore_pattern : &Vec<String>,
+        ) {
+            let set = regex::RegexSet::new(ignore_pattern).unwrap();
 
-            let mut workspace_entire_compile_flags = project_configuration.root_configuration.compile_flags.clone();
-            workspace_entire_compile_flags.extend(workspace.compile_flags.clone().into_iter());
-
-            let mut workspace_compile_arguments: Vec<String> = Vec::new();
-            workspace_compile_arguments.extend(workspace_entire_include_options.into_iter());
-            workspace_compile_arguments.extend(workspace_entire_compile_flags.into_iter());
-            
-            let mut workspace_entire_src_patterns = project_configuration.root_configuration.src_pattern.clone();
-            workspace_entire_src_patterns.extend(workspace.src_pattern.clone().into_iter());
-
-            let mut workspace_entire_exclude_patterns = project_configuration.root_configuration.exclude_pattern.clone();
-            workspace_entire_exclude_patterns.extend(workspace.exclude_pattern.clone().into_iter());
-
-            let workspace_root_folder_absolute = format!(
-                "{}/{}",
-                project_configuration.root_configuration.root_folder, 
-                workspace.root_folder
-            );
-
-            let mut compiled_files_candidate_list: Vec<String> = Vec::new();
-            for workspace_src_pattern in workspace_entire_src_patterns {
-                let workspace_src_pattern_absolute = format!(
-                    "{}{}", 
-                    workspace_root_folder_absolute,
-                    workspace_src_pattern);
-                println!("{}", workspace_src_pattern_absolute);
-                for compiled_file in glob(&workspace_src_pattern_absolute).unwrap().map(|p| p.unwrap()).into_iter() {
-                    compiled_files_candidate_list.push(compiled_file.display().to_string().replace("\\", "/"));
-                }
+            if !set.is_match(path.to_str().unwrap()) {
+                include_dirs.push(path.into());
             }
-            let mut excluded_files_list: Vec<String> = Vec::new();
-            for workspace_exclude_pattern in workspace_entire_exclude_patterns {
-                let workspace_exclude_pattern_absolute = format!(
-                    "{}{}",
-                    workspace_root_folder_absolute,
-                    workspace_exclude_pattern);
-                println!("{}", workspace_exclude_pattern_absolute);
-                for excluded_file in glob(&workspace_exclude_pattern_absolute).unwrap().map(|p| p.unwrap()).into_iter() {
-                    excluded_files_list.push(excluded_file.display().to_string().replace("\\", "/"));
-                }
-            }
-            
-            let compiled_files_list: Vec<&String> = compiled_files_candidate_list.iter().filter(|f| !(excluded_files_list.contains(f))).collect();
+        }
 
-            for compiled_file in compiled_files_list {
-                //let mut compile_command = CompileCommand::default();
-                let mut compile_command = json!({
-                    "directory": "",
-                    "arguments": [],
-                    "file": ""
-                });
-                let mut arguments: Vec<String> = workspace_compile_arguments.clone();
-                compile_command["directory"] = Value::from(project_configuration.root_configuration.root_folder.clone());
-                compile_command["file"] = Value::from(compiled_file.clone());
-                if compiled_file.contains(".cpp") || compiled_file.contains(".cxx") || compiled_file.contains(".cc") {
-                    arguments.insert(0, project_configuration.root_configuration.cpp_compiler_path.clone());
+        let read_dir = sweet_fs::fs::read_dir::ReadDir {
+            dirs : true,
+            recursive : true,
+            files : false,
+            root : true,
+        };
+        if let Ok(dirs) = read_dir.read(root_dir) {
+            for dir in dirs {
+                if dir.is_file() {
+                    // If dir is not the directory, it means root_dir is the leaf directory.
+                    // In this case, only push root_dir and stop the iteration.
+                    add_include_dirs_if_not_ignored(include_dirs, &get_slashed_path_without_prefix(&root_dir, prefix), ignore_pattern);
+                    break;
                 } else {
-                    arguments.insert(0, project_configuration.root_configuration.c_compiler_path.clone());
+                    add_include_dirs_if_not_ignored(include_dirs, &get_slashed_path_without_prefix(&dir, prefix), ignore_pattern);
                 }
-                compile_command["arguments"] = Value::from(arguments);
-                compile_commands.push(compile_command);
             }
-            //println!("compiled_files_list = {:?}", compiled_files_list);
-        }
-        compile_commands
-    }
-}
-
-fn open_project_config_file (filename: &String) -> String {
-    match fs::read_to_string(filename) {
-        Ok(contents) => {
-            println!("open file {}", filename);
-            contents
-        }
-        Err(_) => {
-            println!("could not open file {}", filename);
-            "".to_string()
         }
     }
-}
 
-fn build_project_config_json (json_str: &String) -> Value {
-    match serde_json::from_str(json_str) {
-        Ok(json_value) => {
-            println!("json_value was built");
-            json_value
-        },
-        Err(_) => {
-            println!("json_value was not built. Something was wrong");
-            Value::Null
+    fn build_ignore_regex_patterns(common_include_conf : &Option<IncludeConf>, workspace_include_conf: &Option<IncludeConf>) -> Vec<String> {
+        let mut ignore_regexp_patterns : Vec<String> = Vec::<String>::new();
+
+        fn add_ignore_regex_pattern(patterns : &mut Vec<String>, include_conf : &Option<IncludeConf>) {
+            if let Some(common_conf) = include_conf {
+                if let Some(common_ignore_pattern) = &common_conf.ignore_pattern {
+                    patterns.extend(common_ignore_pattern.clone());
+                }
+            }
         }
+
+        add_ignore_regex_pattern(&mut ignore_regexp_patterns, common_include_conf);
+        add_ignore_regex_pattern(&mut ignore_regexp_patterns, workspace_include_conf);
+
+        ignore_regexp_patterns
     }
+
+    let mut include_dirs = Vec::<PathBuf>::new();
+    let ignore_patterns = build_ignore_regex_patterns(common_include_conf, workspace_include_conf);
+    for include_root in include_roots {
+        add_dirs_under_the_root(&mut include_dirs, &include_root, common_root, &ignore_patterns);
+    }
+
+    include_dirs
 }
 
-fn run() -> std::io::Result<()>{
-    /* get filename to open */
-    let args: Vec<String> = env::args().collect();
-    let filename = match args.get(1) {
-        Some(filename) => filename,
-        None => "",
-    };
+fn list_target_files(
+    common_root : &PathBuf,
+    workspace_path : &String,
+    common_target_conf : &TargetConf,
+    workspace_target_conf : &Option<TargetConf>
+    ) -> Vec<PathBuf> {
+    let workspace_abs_path = common_root.join(workspace_path);
     
-    /* open file. If fail, exit. */
-    let contents = open_project_config_file(&filename.to_string());
+    let mut target_files = Vec::<PathBuf>::new();
+    fn build_target_pattern(common_target_conf : &TargetConf, workspace_target_conf : &Option<TargetConf> ) -> (Vec<String>, Vec<String>) {
+        let mut target_match_pattern = Vec::<String>::new();
+        let mut target_ignore_pattern = Vec::<String>::new();
 
-    /* build json object from the json string */
-    let json_value: Value = build_project_config_json(&contents);
+        target_match_pattern.extend(common_target_conf.match_pattern.clone().unwrap_or_default());
+        target_ignore_pattern.extend(common_target_conf.ignore_pattern.clone().unwrap_or_default());
+        if let Some(workspace_target_conf) = workspace_target_conf {
+            target_match_pattern.extend(workspace_target_conf.match_pattern.clone().unwrap_or_default());
+            target_ignore_pattern.extend(workspace_target_conf.ignore_pattern.clone().unwrap_or_default());
+        }
 
-    let mut project_configuration: ProjectConfiguration = ProjectConfiguration::default();
-    project_configuration.update_root_config_from(&json_value);
-    project_configuration.update_workspace_config_from(&json_value);
+        (target_match_pattern, target_ignore_pattern)
+    }
 
-    let compile_commands: Vec<Value> = Vec::from(&project_configuration);
-    let compile_commands_json = serde_json::to_string_pretty(&compile_commands).unwrap();
+    let (target_pattern, ignore_pattern) = build_target_pattern(common_target_conf, workspace_target_conf);
+    let target_set = regex::RegexSet::new(target_pattern).unwrap();
+    let ignore_set = regex::RegexSet::new(ignore_pattern).unwrap();
 
-    let mut compile_commands_json_file = File::create("compile_commands.json")?;
+    for entry in walkdir::WalkDir::new(workspace_abs_path).into_iter().filter_map(|e| e.ok()) {
+        let file_str = entry.path().to_str().unwrap();
+        if target_set.is_match(file_str) && ! ignore_set.is_match(file_str) {
+            target_files.push(get_slashed_path_without_prefix(&entry.into_path(), common_root));
+        }
+    }
 
-    compile_commands_json_file.write_all(compile_commands_json.as_bytes())?;
+    target_files
+}
 
-    Ok(())
+fn list_options(common_conf : &Option<OptionConf>, workspace_option : &Option<OptionConf>) -> Vec<String> {
+    let mut options = Vec::<String>::new();
+
+    fn add_options(option : &mut Vec<String>, added : &Option<OptionConf>) {
+        if let Some(added) = added {
+            if let Some(arg) = added.arg.as_ref() {
+                option.extend(arg.clone());
+            }
+        }
+    }
+
+    add_options(&mut options, common_conf);
+    add_options(&mut options, workspace_option);
+
+    options
 }
 
 fn main() {
-    run();
+    let args : Vec<String> = std::env::args().collect();
+    let input = match args.get(1) {
+        Some(filename) => filename,
+        None => {
+            eprintln!("Input filename is reqired");
+            return;
+        }
+    };
 
-    // for workspace in workspaces {
-    //     println!("{}", workspace);
-    // }
+    let output = match args.get(2) {
+        Some(dir) => format!("{}/compile_commands.json", dir),
+        None => {
+            eprintln!("Output directory is reqired");
+            return;
+        }
+    };
+
+    let mut out_file = match std::fs::File::create(output) {
+        Ok(handle) => handle,
+        Err(e) => {
+            eprintln!("{}", e);
+            return;
+        }
+    };
+    
+    let conf_str = std::fs::read_to_string(input).unwrap();
+    let conf : CompDBConf = toml::from_str(conf_str.as_str()).unwrap();
+
+    let common_root = std::path::PathBuf::from(conf.common.root_dir.as_str());
+    let mut compilation_db = Vec::<CompilationEntry>::new();
+    for workspace in conf.workspace {
+        let targets = list_target_files(&common_root, &workspace.path, &conf.common.target, &workspace.target);
+
+        let mut options : Vec<String> = list_include_dirs(&common_root, &conf.common.include, &workspace.include).into_iter().map(|d| format!("-I{}", d.display())).collect();
+        options.extend(list_options(&conf.common.option, &workspace.option));
+
+        for target in targets {
+            let mut compilation_entry = CompilationEntry::default();
+            //println!("{}", target.display());
+            compilation_entry.file = target.to_str().unwrap().to_string();
+            if ["cc", "CC", "cpp", "CPP", "cxx", "CXX"].contains(&target.extension().unwrap_or_default().to_str().unwrap()) {
+                compilation_entry.command.push(conf.common.cpp_compiler.clone());
+            } else {
+                compilation_entry.command.push(conf.common.c_compiler.clone());
+            }
+            compilation_entry.command.extend(options.clone());
+            compilation_entry.directory = common_root.to_str().unwrap();
+
+            compilation_db.push(compilation_entry);
+        }
+    }
+
+    match out_file.write_all(serde_json::to_string_pretty(&compilation_db).unwrap().as_bytes()) {
+        Ok(()) => println!("success to create compile_command.json"),
+        Err(e) => eprintln!("failed to create compile_command.json : {}", e),
+    }
 }
