@@ -49,7 +49,7 @@ struct OptionConf {
 struct CompilationEntry<'a> {
     directory : &'a str,
     command : Vec<String>,
-    file : String,
+    file : &'a str,
 }
 
 fn get_slashed_path_without_prefix(path : &PathBuf, prefix: &PathBuf) -> PathBuf {
@@ -248,7 +248,7 @@ fn main() {
         for target in targets {
             let mut compilation_entry = CompilationEntry::default();
             //println!("{}", target.display());
-            compilation_entry.file = target.to_str().unwrap().to_string();
+            compilation_entry.file = target.to_str().unwrap();
             if ["cc", "CC", "cpp", "CPP", "cxx", "CXX"].contains(&target.extension().unwrap_or_default().to_str().unwrap()) {
                 compilation_entry.command.push(conf.common.cpp_compiler.clone());
             } else {
