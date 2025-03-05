@@ -1,5 +1,5 @@
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -52,7 +52,7 @@ struct CompilationEntry<'a> {
     file : String,
 }
 
-fn get_slashed_path_without_prefix(path : &PathBuf, prefix: &PathBuf) -> PathBuf {
+fn get_slashed_path_without_prefix(path : &Path, prefix: &Path) -> PathBuf {
     if path.starts_with(prefix) {
         path.strip_prefix(prefix).unwrap().to_str().unwrap().replace("\\", "/").into()
     } else {
@@ -61,18 +61,18 @@ fn get_slashed_path_without_prefix(path : &PathBuf, prefix: &PathBuf) -> PathBuf
 }
 
 fn list_include_dirs(
-    common_root : &PathBuf, 
+    common_root : &Path, 
     common_include_conf : &Option<IncludeConf>, 
-    workspace_root_path : &PathBuf, 
+    workspace_root_path : &Path, 
     workspace_include_conf : &Option<IncludeConf>) -> Vec<PathBuf> {
 
     fn build_include_roots_from_include_conf(
-        common_root : &PathBuf,
+        common_root : &Path,
         common_include_conf : &Option<IncludeConf>,
-        workspace_root_path : &PathBuf,
+        workspace_root_path : &Path,
         workspace_include_conf : &Option<IncludeConf>,
     ) -> Vec<PathBuf> {
-        fn add_include_roots_from_include_conf(org : &mut Vec<PathBuf>, root : &PathBuf, include_conf : &Option<IncludeConf>) {
+        fn add_include_roots_from_include_conf(org : &mut Vec<PathBuf>, root : &Path, include_conf : &Option<IncludeConf>) {
             if let Some(include_conf) = include_conf {            
                 if let Some(include_roots) = include_conf.root_dir.as_ref() {
                     for include_root in include_roots {
@@ -90,8 +90,8 @@ fn list_include_dirs(
         let mut include_roots = Vec::<PathBuf>::new();
         add_include_roots_from_include_conf(&mut include_roots, common_root, common_include_conf);
 
-        let workspace_root = if workspace_root_path.as_path().is_relative() {
-            &common_root.join(workspace_root_path.as_path())
+        let workspace_root = if workspace_root_path.is_relative() {
+            &common_root.join(workspace_root_path)
         } else {
             workspace_root_path
         };
@@ -102,7 +102,7 @@ fn list_include_dirs(
 
     let include_roots = build_include_roots_from_include_conf(common_root, common_include_conf, workspace_root_path, workspace_include_conf);
 
-    fn add_dirs_under_the_root(include_dirs : &mut Vec<PathBuf>, root_dir : &PathBuf, prefix : &PathBuf, ignore_pattern : &Vec<String>) {
+    fn add_dirs_under_the_root(include_dirs : &mut Vec<PathBuf>, root_dir : &Path, prefix : &Path, ignore_pattern : &Vec<String>) {
 
         fn add_include_dirs_if_not_ignored(
             include_dirs : &mut Vec<PathBuf>,
@@ -148,7 +148,7 @@ fn list_include_dirs(
 }
 
 fn list_target_files(
-    common_root : &PathBuf,
+    common_root : &Path,
     workspace_path : &String,
     common_target_conf : &TargetConf,
     workspace_target_conf : &Option<TargetConf>
@@ -240,9 +240,8 @@ fn main() {
         options.extend(list_options(&conf.common.option, &workspace.option));
 
         for target in targets {
-            let mut compilation_entry = CompilationEntry::default();
+            let mut compilation_entry = CompilationEntry {file: target.to_str().unwrap().to_string(), ..Default::default()};
             //println!("{}", target.display());
-            compilation_entry.file = target.to_str().unwrap().to_string();
             if ["cc", "CC", "cpp", "CPP", "cxx", "CXX"].contains(&target.extension().unwrap_or_default().to_str().unwrap()) {
                 compilation_entry.arguments.extend(conf.common.cpp_compiler.clone());
             } else {
