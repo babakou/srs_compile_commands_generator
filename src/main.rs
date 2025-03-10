@@ -48,7 +48,7 @@ struct OptionConf {
 #[derive(Serialize, Deserialize, Default)]
 struct CompilationEntry<'a> {
     directory : &'a str,
-    arguments : Vec<String>,
+    arguments : Vec<&'a str>,
     file : String,
 }
 
@@ -184,7 +184,7 @@ fn list_target_files(
     target_files
 }
 
-fn list_options(common_conf : &Option<OptionConf>, workspace_option : &Option<OptionConf>) -> Vec<String> {
+fn list_options<'a>(common_conf : &Option<OptionConf>, workspace_option : &Option<OptionConf>) -> Vec<&'a str> {
     let mut options = Vec::<String>::new();
 
     fn add_options(option : &mut Vec<String>, added : &Option<OptionConf>) {
@@ -198,7 +198,7 @@ fn list_options(common_conf : &Option<OptionConf>, workspace_option : &Option<Op
     add_options(&mut options, common_conf);
     add_options(&mut options, workspace_option);
 
-    options
+    options.into_iter().map(|o| static_str_ops::staticize(o)).collect()
 }
 
 fn main() {
@@ -232,22 +232,26 @@ fn main() {
 
     let common_root = std::path::PathBuf::from(conf.common.root_dir);
     let mut compilation_db = Vec::<CompilationEntry>::new();
+    let workspace_arg_c : Vec<&str> = conf.common.c_compiler.iter().map(|a| a.as_str()).collect();
+    let workspace_arg_cpp : Vec<&str> = conf.common.cpp_compiler.iter().map(|a| a.as_str()).collect();
+
     for workspace in conf.workspace {
         let targets = list_target_files(&common_root, &workspace.path, &conf.common.target, &workspace.target);
 
         let workspace_root = std::path::PathBuf::from(workspace.path);
-        let mut options : Vec<String> = list_include_dirs(&common_root, &conf.common.include, &workspace_root, &workspace.include).into_iter().map(|d| format!("-I{}", d.display())).collect();
-        options.extend(list_options(&conf.common.option, &workspace.option));
+        let options : Vec<String> = list_include_dirs(&common_root, &conf.common.include, &workspace_root, &workspace.include).into_iter().map(|d| format!("-I{}", d.display())).collect();
+        let mut options_str : Vec<&str> = options.iter().map(|o| static_str_ops::staticize(o)).collect();
+        options_str.extend(list_options(&conf.common.option, &workspace.option));
 
         for target in targets {
             let mut compilation_entry = CompilationEntry {file: target.to_str().unwrap().to_string(), ..Default::default()};
             //println!("{}", target.display());
             if ["cc", "CC", "cpp", "CPP", "cxx", "CXX"].contains(&target.extension().unwrap_or_default().to_str().unwrap()) {
-                compilation_entry.arguments.extend(conf.common.cpp_compiler.clone());
+                compilation_entry.arguments.extend(workspace_arg_cpp.clone());
             } else {
-                compilation_entry.arguments.extend(conf.common.c_compiler.clone());
+                compilation_entry.arguments.extend(workspace_arg_c.clone());
             }
-            compilation_entry.arguments.extend(options.clone());
+            compilation_entry.arguments.extend(options_str.clone());
             compilation_entry.directory = common_root.to_str().unwrap();
 
             compilation_db.push(compilation_entry);
