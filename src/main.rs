@@ -175,9 +175,9 @@ fn list_target_files(
     let ignore_set = regex::RegexSet::new(ignore_pattern).unwrap();
 
     for entry in walkdir::WalkDir::new(workspace_abs_path).into_iter().filter_map(|e| e.ok()) {
-        let file_str = entry.path().to_str().unwrap();
-        if target_set.is_match(file_str) && ! ignore_set.is_match(file_str) {
-            target_files.push(get_slashed_path_without_prefix(&entry.into_path(), common_root));
+        let file_str = get_slashed_path_without_prefix(entry.path(), common_root);
+        if target_set.is_match(file_str.to_str().unwrap()) && ! ignore_set.is_match(file_str.to_str().unwrap()) {
+            target_files.push(file_str);
         }
     }
 
@@ -230,12 +230,12 @@ fn main() {
     let conf_str = std::fs::read_to_string(input).unwrap();
     let conf : CompDBConf = toml::from_str(conf_str.as_str()).unwrap();
 
-    let common_root = std::path::PathBuf::from(conf.common.root_dir.as_str());
+    let common_root = std::path::PathBuf::from(conf.common.root_dir);
     let mut compilation_db = Vec::<CompilationEntry>::new();
     for workspace in conf.workspace {
         let targets = list_target_files(&common_root, &workspace.path, &conf.common.target, &workspace.target);
 
-        let workspace_root = std::path::PathBuf::from(workspace.path.as_str());
+        let workspace_root = std::path::PathBuf::from(workspace.path);
         let mut options : Vec<String> = list_include_dirs(&common_root, &conf.common.include, &workspace_root, &workspace.include).into_iter().map(|d| format!("-I{}", d.display())).collect();
         options.extend(list_options(&conf.common.option, &workspace.option));
 
