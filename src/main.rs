@@ -49,7 +49,7 @@ struct OptionConf {
 struct CompilationEntry<'a> {
     directory : &'a str,
     arguments : Vec<&'a str>,
-    file : String,
+    file : &'a str,
 }
 
 fn get_slashed_path_without_prefix(path : &Path, prefix: &Path) -> PathBuf {
@@ -244,7 +244,8 @@ fn main() {
         options_str.extend(list_options(&conf.common.option, &workspace.option));
 
         for target in targets {
-            let mut compilation_entry = CompilationEntry {file: target.to_str().unwrap().to_string(), ..Default::default()};
+            let target_str : &'static str = static_str_ops::staticize(target.to_str().unwrap());
+            let mut compilation_entry = CompilationEntry {file: target_str, ..Default::default()};
             //println!("{}", target.display());
             if ["cc", "CC", "cpp", "CPP", "cxx", "CXX"].contains(&target.extension().unwrap_or_default().to_str().unwrap()) {
                 compilation_entry.arguments.extend(workspace_arg_cpp.clone());
@@ -252,6 +253,7 @@ fn main() {
                 compilation_entry.arguments.extend(workspace_arg_c.clone());
             }
             compilation_entry.arguments.extend(options_str.clone());
+            compilation_entry.arguments.extend(["-c", target_str].into_iter());
             compilation_entry.directory = common_root.to_str().unwrap();
 
             compilation_db.push(compilation_entry);
