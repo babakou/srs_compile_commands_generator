@@ -76,7 +76,11 @@ fn list_include_dirs(
             if let Some(include_conf) = include_conf {            
                 if let Some(include_roots) = include_conf.root_dir.as_ref() {
                     for include_root in include_roots {
-                        let include_root_as_path = std::path::PathBuf::from(include_root);
+                        let include_root_as_path = if include_root == "." {
+                            std::path::PathBuf::from("")
+                        } else {
+                            std::path::PathBuf::from(include_root)
+                        };
                         if include_root_as_path.is_relative() {
                             org.push(root.join(include_root_as_path));
                         } else {
