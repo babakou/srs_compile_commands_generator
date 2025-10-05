@@ -205,31 +205,11 @@ fn list_options<'a>(common_conf : &Option<OptionConf>, workspace_option : &Optio
     options.into_iter().map(|o| static_str_ops::staticize(o)).collect()
 }
 
-fn main() {
+fn main() -> Result<(), String>{
     let args : Vec<String> = std::env::args().collect();
-    let input = match args.get(1) {
-        Some(filename) => filename,
-        None => {
-            eprintln!("Input filename is reqired");
-            return;
-        }
-    };
-
-    let output = match args.get(2) {
-        Some(dir) => format!("{}/compile_commands.json", dir),
-        None => {
-            eprintln!("Output directory is reqired");
-            return;
-        }
-    };
-
-    let mut out_file = match std::fs::File::create(output) {
-        Ok(handle) => handle,
-        Err(e) => {
-            eprintln!("{}", e);
-            return;
-        }
-    };
+    let input = args.get(1).ok_or_else(|| "Input filename is required")?;
+    let output = args.get(2).ok_or_else(|| "Output directory is required")?;
+    let mut out_file = std::fs::File::create(output).map_err(|e| e.to_string())?;
     
     let conf_str = std::fs::read_to_string(input).unwrap();
     let conf : CompDBConf = toml::from_str(conf_str.as_str()).unwrap();
@@ -264,8 +244,5 @@ fn main() {
         }
     }
 
-    match out_file.write_all(serde_json::to_string_pretty(&compilation_db).unwrap().as_bytes()) {
-        Ok(()) => println!("success to create compile_command.json"),
-        Err(e) => eprintln!("failed to create compile_command.json : {}", e),
-    }
+    out_file.write_all(serde_json::to_string_pretty(&compilation_db).unwrap().as_bytes()).map_err(|e| e.to_string())
 }
